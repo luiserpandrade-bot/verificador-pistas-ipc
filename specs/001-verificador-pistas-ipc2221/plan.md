@@ -180,6 +180,7 @@ app/
 │   └── pistas.py           # CRUD de /pistas/ + POST /pistas/calculo (I.1)
 ├── services/
 │   ├── auth.py             # registrar_usuario, autenticar_usuario
+│   ├── errores.py          # Excepciones de dominio sin dependencias de FastAPI: AnchoInsuficienteError, FueraDeRangoError, PistaNoEncontradaError, PistaAjenaError (decisión R-009)
 │   └── pistas.py           # registrar_pista, listar_pistas, obtener_pista, actualizar_pista, eliminar_pista, calcular_ancho_minimo (I.2, II.1, II.3)
 ├── repositories/
 │   ├── usuarios.py         # Única capa con Session para usuarios (I.3)
@@ -206,6 +207,10 @@ alembic/
 tests/
 ├── conftest.py             # Fixtures: sesión SQLite en memoria, dependency_overrides (VII.4, VII.5)
 ├── fakes.py                # Repositorio falso con el mismo contrato (VII.2)
+├── README.md               # Mapeo regla de negocio → test que la cubre (VII.3, cobertura de reglas)
+├── test_estructura.py      # Verifica que las siete carpetas de capa existen y son importables
+├── test_env_example.py     # Verifica que .env.example documenta las variables y que .env está ignorado (IV.3)
+├── test_arquitectura.py    # Verifica por imports que services/ no conoce SQLAlchemy ni FastAPI y que mcp/tools/ no reimplementa services/ (I.2, I.5, VI.1)
 ├── unit/
 │   ├── test_ipc2221.py     # Valores de referencia calculados a mano (VII.7)
 │   └── test_services_pistas.py  # R1-R5 con repositorio falso
@@ -229,3 +234,19 @@ frontend/backend y móvil de la plantilla: esta funcionalidad no tiene interfaz 
 usuario propia; sus dos interfaces son REST y MCP. Los tests se separan por nivel
 de la pirámide del Artículo VII.1 en `tests/unit`, `tests/integration`,
 `tests/api` y `tests/mcp`.
+
+## Hallazgos descartados en /speckit-analyze
+
+Dos hallazgos del análisis de consistencia se descartaron de forma deliberada y no
+deben "corregirse" en una pasada posterior:
+
+- **B2 — "latencia perceptible" sin métrica (LOW)**: descartado. El párrafo de
+  Performance Goals ya cita la decisión R-006 de `research.md`, que declara
+  explícitamente que no se fijan objetivos numéricos porque la spec no los
+  contiene y el dominio no los exige. Añadir un p95 arbitrario sería inventar un
+  requisito sin origen en la especificación.
+- **F3 — la rama declarada es `main` mientras el script reporta
+  `001-verificador-pistas-ipc2221` (LOW)**: descartado. No se creará una rama
+  dedicada, porque partiría el historial justo antes de implementar. La
+  discrepancia es de metadatos y está documentada en la cabecera de este plan: el
+  script deriva `BRANCH` de `.specify/feature.json`, no de git.

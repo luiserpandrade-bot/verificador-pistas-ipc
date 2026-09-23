@@ -41,11 +41,24 @@ Tabla `pistas`, modelo `app/models/pista.py`.
 | `usuario_id` | Integer | NOT NULL, FK → `usuarios.id`, indexado | Entidad Pista, Artículo III.3 |
 | `nombre_red` | String | NOT NULL | Entidad Pista |
 | `proyecto` | String | NOT NULL, texto libre | Entidad Pista |
-| `corriente_a` | Float | NOT NULL, `> 0` y `<= 35` | Entidad Pista, R2 |
-| `espesor_oz` | Float | NOT NULL, `>= 0.5` y `<= 3` | Entidad Pista, R2 |
-| `capa` | String (Enum `Capa`) | NOT NULL, `externa` \| `interna` | Entidad Pista, R3 |
-| `delta_t_c` | Float | NOT NULL, `>= 10` y `<= 100` | Entidad Pista, R2 |
-| `ancho_mm` | Float | NOT NULL, `> 0` | Entidad Pista, FR-017 |
+| `corriente_a` | Float | NOT NULL · rango `> 0` y `<= 35`: **regla de negocio, validada en `services/` → 400** | Entidad Pista, R2 |
+| `espesor_oz` | Float | NOT NULL · rango `>= 0.5` y `<= 3`: **regla de negocio, validada en `services/` → 400** | Entidad Pista, R2 |
+| `capa` | String (Enum `Capa`) | NOT NULL, `externa` \| `interna`: **validación de schema → 422** | Entidad Pista, R3 |
+| `delta_t_c` | Float | NOT NULL · rango `>= 10` y `<= 100`: **regla de negocio, validada en `services/` → 400** | Entidad Pista, R2 |
+| `ancho_mm` | Float | NOT NULL, `> 0`: **validación de schema → 422** | Entidad Pista, FR-017 |
+
+**Capa de validación de cada restricción (no intercambiables)**:
+
+- Los **rangos de R2** (`corriente_a`, `espesor_oz`, `delta_t_c`) son regla de
+  negocio y se validan en `app/services/pistas.py`, devolviendo `400`
+  (`FueraDeRangoError`). **No deben duplicarse como `gt`/`le`/`ge` en los schemas
+  Pydantic**: si el schema los rechazara primero, el caso de error 2 de la spec
+  pasaría de `400` a `422` y el contrato REST quedaría incumplido.
+- `ancho_mm > 0` sí es **validación de schema** (`422`): un ancho nulo o negativo
+  es un dato inválido, no una pista fuera de norma IPC-2221. Nunca debe llegar al
+  cálculo ni producir `400`.
+- `capa` es validación de schema (`422`) mediante el `Enum`, tal como exige el caso
+  de error 3.
 
 **Reglas de validación** (todas verificadas antes de persistir):
 

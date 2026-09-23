@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: User description: "Genera la especificación de la funcionalidad usando como fuente el archivo spec-borrador.md de la raíz. Conserva las entidades, las cinco reglas de negocio, la tabla del contrato REST, el contrato MCP y los siete casos de error tal como están. Conserva textualmente las cuatro marcas las marcas de clarificación sin resolverlas ni eliminarlas: se responderán con /speckit-clarify. No inventes requisitos, endpoints ni entidades que no estén en el borrador."
+**Input**: User description: "Genera la especificación de la funcionalidad usando como fuente el archivo spec-borrador.md de la raíz. Conserva las entidades, las cinco reglas de negocio, la tabla del contrato REST, el contrato MCP y los siete casos de error tal como están. Conserva textualmente las cuatro marcas de clarificación sin resolverlas ni eliminarlas: se responderán con /speckit-clarify. No inventes requisitos, endpoints ni entidades que no estén en el borrador."
 
 Sistema que permite a un diseñador registrar las pistas de sus diseños de PCB y
 verificar automáticamente si el ancho de cada pista cumple el mínimo exigido por
@@ -164,7 +164,7 @@ pasando el identificador ajeno de forma manual.
 - **FR-002**: El sistema MUST no exponer nunca la contraseña de un usuario en
   ninguna respuesta.
 - **FR-003**: El sistema MUST permitir que un usuario registrado obtenga una
-  credencial de sesión presentando su email y contraseña, y MUST rechazar
+  credencial de sesión (JWT) presentando su email y contraseña, y MUST rechazar
   credenciales inválidas.
 - **FR-004**: El sistema MUST exigir identidad autenticada para toda operación
   sobre pistas y para la consulta de ancho mínimo.
@@ -231,7 +231,7 @@ decimales.
 | POST | /pistas/ | Sí | nombre_red, proyecto, corriente_a, espesor_oz, capa, delta_t_c, ancho_mm | 201 Pista | 400 ancho insuficiente, 400 fuera de rango, 401, 422 |
 | GET | /pistas/ | Sí | query: skip, limit | 200 lista | 401, 422 |
 | GET | /pistas/{id} | Sí | — | 200 Pista | 401, 403 no es dueño, 404 |
-| PATCH | /pistas/{id} | Sí | campos a modificar | 200 Pista | 400 ancho insuficiente, 401, 403, 404, 422 |
+| PATCH | /pistas/{id} | Sí | campos a modificar | 200 Pista | 400 ancho insuficiente, 400 fuera de rango, 401, 403, 404, 422 |
 | DELETE | /pistas/{id} | Sí | — | 204 | 401, 403 no es dueño, 404 |
 | POST | /pistas/calculo | Sí | corriente_a, espesor_oz, capa, delta_t_c | 200 ancho mínimo | 400 fuera de rango, 401, 422 |
 
