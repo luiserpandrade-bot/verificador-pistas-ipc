@@ -12,6 +12,15 @@ Sistema que permite a un diseñador registrar las pistas de sus diseños de PCB 
 verificar automáticamente si el ancho de cada pista cumple el mínimo exigido por
 la ecuación de IPC-2221 para la corriente que va a conducir.
 
+## Clarifications
+
+### Session 2026-09-22
+
+- Q: ¿Un ancho exactamente igual al mínimo calculado se acepta, o se exige un margen de seguridad? → A: Se acepta. La comparación es `ancho_mm >= minimo_mm`, sin margen de seguridad adicional; el margen lo decide el diseñador eligiendo un ΔT conservador.
+- Q: ¿Cuáles son los límites exactos de corriente, ΔT y espesor, y una entrada fuera de rango se rechaza con error o se acepta con una advertencia en la respuesta? → A: `corriente_a` mayor que 0 y hasta 35 A; `delta_t_c` entre 10 y 100 °C inclusive; `espesor_oz` entre 0.5 y 3 oz inclusive. Fuera de ese rango se rechaza con error de regla de negocio (400); nunca se acepta con advertencia.
+- Q: ¿Con cuántos decimales y con qué tolerancia se compara el ancho diseñado contra el mínimo calculado, para evitar falsos rechazos por redondeo? → A: Se compara en milímetros con tolerancia absoluta de 0.001 mm a favor del diseñador, es decir `ancho_mm >= minimo_mm - 0.001`. El ancho mínimo se reporta redondeado a 3 decimales.
+- Q: Si una actualización deja la pista fuera de norma, ¿se rechaza la actualización completa o se guarda marcada como no conforme? → A: Se rechaza la actualización completa con 400 y la pista conserva sus valores anteriores. No existe un estado "no conforme" almacenado.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Registrar una pista y saber si cumple la norma (Priority: P1)
@@ -93,9 +102,9 @@ pasando el identificador ajeno de forma manual.
 2. **Given** una pista que pertenece a otro diseñador, **When** intenta leerla,
    modificarla o eliminarla pasando su identificador, **Then** la operación se
    deniega.
-3. **Given** una pista propia, **When** la actualiza con valores que dejan el
-   ancho por debajo del mínimo de IPC-2221, **Then** el sistema vuelve a
-   verificar las reglas de cálculo con los valores resultantes.
+3. **Given** una pista propia, **When** la actualiza con valores que dejarían el
+   ancho por debajo del mínimo de IPC-2221, **Then** la actualización completa se
+   rechaza y la pista conserva sus valores anteriores.
 4. **Given** una pista propia, **When** la elimina, **Then** deja de aparecer en
    su listado.
 
@@ -103,15 +112,18 @@ pasando el identificador ajeno de forma manual.
 
 ### Edge Cases
 
-- ¿Qué ocurre cuando el ancho diseñado es exactamente igual al ancho mínimo
-  calculado? (pendiente de clarificación en R1)
-- ¿Qué ocurre cuando los parámetros caen justo en el límite del rango de validez
-  del modelo? (pendiente de clarificación en R2)
-- ¿Qué ocurre cuando una diferencia de redondeo, y no un ancho realmente
-  insuficiente, sitúa el ancho diseñado por debajo del mínimo calculado?
-  (pendiente de clarificación en el cálculo de referencia)
-- ¿Qué ocurre cuando una actualización deja una pista ya registrada fuera de
-  norma? (pendiente de clarificación en R5)
+- Un ancho diseñado exactamente igual al ancho mínimo calculado se acepta: la
+  comparación es `>=`, sin margen de seguridad adicional (R1).
+- Los extremos del rango de validez se aceptan: `delta_t_c` de 10 °C y de
+  100 °C, y `espesor_oz` de 0.5 oz y de 3 oz son válidos. `corriente_a` debe ser
+  estrictamente mayor que 0 y como máximo 35 A. Un valor justo por fuera de
+  cualquiera de esos límites se rechaza con 400 (R2).
+- Una diferencia de hasta 0.001 mm por debajo del mínimo calculado no provoca
+  rechazo: la tolerancia absoluta de 0.001 mm juega a favor del diseñador y
+  evita falsos rechazos por redondeo.
+- Una actualización que dejaría la pista fuera de norma se rechaza por completo
+  con 400 y la pista conserva sus valores anteriores; no queda almacenada como
+  no conforme (R5).
 - ¿Cómo se comporta el sistema cuando se opera sobre una pista que no existe?
 - ¿Cómo se comporta el sistema cuando se opera sin identidad autenticada?
 - ¿Cómo se comporta la herramienta de eliminación por MCP si no se obtiene la
@@ -123,24 +135,26 @@ pasando el identificador ajeno de forma manual.
 
 - **R1 — Ancho suficiente**: el ancho diseñado de una pista debe ser mayor o
   igual al ancho mínimo que resulta de la ecuación de IPC-2221 para su
-  corriente, espesor, capa y ΔT. Si es menor, la pista se rechaza.
-  [NECESITA CLARIFICACIÓN: ¿un ancho exactamente igual al mínimo calculado se
-  acepta, o se exige un margen de seguridad?]
+  corriente, espesor, capa y ΔT. Si es menor, la pista se rechaza. Un ancho
+  exactamente igual al mínimo calculado se acepta: la comparación es
+  `ancho_mm >= minimo_mm`, aplicada con la tolerancia declarada en el apartado
+  de cálculo de referencia, y no se exige ningún margen de seguridad adicional.
+  El margen lo decide el diseñador eligiendo un ΔT conservador.
 - **R2 — Rango de validez del modelo**: los parámetros deben estar dentro del
-  rango en el que la ecuación de IPC-2221 es aplicable. Fuera de ese rango el
-  resultado no se extrapola en silencio.
-  [NECESITA CLARIFICACIÓN: ¿cuáles son los límites exactos de corriente, ΔT y
-  espesor, y una entrada fuera de rango se rechaza con error o se acepta con
-  una advertencia en la respuesta?]
+  rango en el que la ecuación de IPC-2221 es aplicable. Ese rango es:
+  `corriente_a` mayor que 0 y hasta 35 A; `delta_t_c` entre 10 y 100 °C
+  inclusive; `espesor_oz` entre 0.5 y 3 oz inclusive. Una entrada fuera de ese
+  rango se rechaza con error de regla de negocio (400) y nunca se acepta con
+  una advertencia en la respuesta: el resultado no se extrapola en silencio.
 - **R3 — Constante según la capa**: el cálculo usa k = 0.048 para capa externa
   y k = 0.024 para capa interna. Una capa distinta de esas dos es inválida.
 - **R4 — Aislamiento por usuario**: un usuario solo puede leer, modificar o
   eliminar sus propias pistas, sin importar qué identificador se pase en la
   solicitud.
 - **R5 — Revalidación al modificar**: al actualizar una pista se vuelven a
-  verificar R1, R2 y R3 con los valores resultantes.
-  [NECESITA CLARIFICACIÓN: si una actualización deja la pista fuera de norma,
-  ¿se rechaza la actualización completa o se guarda marcada como no conforme?]
+  verificar R1, R2 y R3 con los valores resultantes. Si el resultado queda fuera
+  de norma, la actualización completa se rechaza con 400 y la pista conserva sus
+  valores anteriores; no existe un estado "no conforme" almacenado.
 
 ### Functional Requirements
 
@@ -203,9 +217,10 @@ multiplicando por 0.0254.
 Se usa IPC-2221 y no IPC-2152 porque esta última, siendo la norma vigente y más
 precisa, se basa en gráficas sin ecuación cerrada. La decisión queda declarada.
 
-[NECESITA CLARIFICACIÓN: ¿con cuántos decimales y con qué tolerancia se compara
-el ancho diseñado contra el mínimo calculado, para evitar falsos rechazos por
-redondeo?]
+La comparación entre el ancho diseñado y el mínimo calculado se hace en
+milímetros, con una tolerancia absoluta de 0.001 mm a favor del diseñador:
+`ancho_mm >= minimo_mm - 0.001`. El ancho mínimo se reporta redondeado a 3
+decimales.
 
 ## Contrato de la API (REST)
 
@@ -269,12 +284,11 @@ parámetros, para consultarlo antes de decidir el ancho de una pista.
 
 ## Assumptions
 
-- Las cuatro marcas de clarificación pendientes de este documento (en R1, R2,
-  R5 y el cálculo de referencia) se conservan sin resolver por indicación
-  explícita del usuario: se responderán con
-  `/speckit-clarify`. Hasta entonces, R1, R2, R5 y la tolerancia de comparación
-  del cálculo quedan parcialmente indefinidas y no deben decidirse durante la
-  planificación.
+- Las cuatro clarificaciones que quedaban pendientes (en R1, R2, R5 y el cálculo
+  de referencia) fueron decididas y registradas en `## Clarifications`
+  (Session 2026-09-22): umbral de aceptación, límites del rango de validez,
+  tolerancia de comparación y comportamiento de una actualización fuera de
+  norma. Ya no hay decisiones abiertas en esas cuatro áreas.
 - El alcance es exactamente el del borrador: no se añaden entidades, endpoints,
   herramientas MCP ni requisitos que el borrador no contenga. En particular, no
   se asume recuperación de contraseña, roles, compartición de pistas entre
