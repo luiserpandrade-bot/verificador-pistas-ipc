@@ -59,3 +59,26 @@ class PistaOut(BaseModel):
     capa: Capa
     delta_t_c: float
     ancho_mm: float
+
+
+class CalculoIn(BaseModel):
+    """Cuerpo de `POST /pistas/calculo`. No incluye ancho: es lo que se quiere averiguar."""
+
+    corriente_a: float = Field(
+        gt=0, description="Corriente en amperios. El tope de R2 lo aplica el service."
+    )
+    espesor_oz: float = Field(
+        gt=0, description="Espesor de cobre en onzas. El rango de R2 lo aplica el service."
+    )
+    capa: Capa
+    delta_t_c: float = Field(
+        gt=0, description="Elevación de temperatura en °C. El rango de R2 lo aplica el service."
+    )
+
+
+class CalculoOut(BaseModel):
+    """Respuesta de `POST /pistas/calculo`: solo el ancho mínimo, en milímetros."""
+
+    ancho_minimo_mm: float = Field(
+        description="Ancho mínimo que exige IPC-2221, en milímetros y con 3 decimales."
+    )
