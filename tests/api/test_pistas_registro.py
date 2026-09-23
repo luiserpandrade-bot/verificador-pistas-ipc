@@ -165,12 +165,33 @@ def test_el_ancho_exactamente_igual_al_minimo_se_acepta(cliente: TestClient) -> 
 
 
 def test_el_router_no_contiene_reglas_de_negocio() -> None:
-    """Artículo I.1: ni comparaciones de ancho ni constantes de la norma."""
+    """Artículo I.1: ni comparaciones de ancho ni constantes de la norma.
+
+    Se inspeccionan identificadores usados e imports, no el texto: `ancho_minimo_mm` es un
+    campo legítimo del schema de respuesta `CalculoOut`, y eso no es calcular nada.
+    """
+    import ast
     import inspect
 
     import app.routers.pistas as modulo
 
-    fuente = inspect.getsource(modulo)
+    arbol = ast.parse(inspect.getsource(modulo))
+    llamadas = {
+        nodo.func.id
+        for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.Call) and isinstance(nodo.func, ast.Name)
+    }
+    importados = {
+        nodo.module
+        for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.ImportFrom) and nodo.module
+    }
+    numeros = {
+        nodo.value
+        for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.Constant) and isinstance(nodo.value, float)
+    }
 
-    for prohibido in ("ancho_minimo_mm", "TOLERANCIA_MM", "K_POR_CAPA", "0.048", "0.001"):
-        assert prohibido not in fuente
+    assert "ancho_minimo_mm" not in llamadas, "el router no debe calcular: eso es del service"
+    assert "app.utils.ipc2221" not in importados
+    assert numeros == set(), f"el router no debe contener constantes de la norma: {numeros}"

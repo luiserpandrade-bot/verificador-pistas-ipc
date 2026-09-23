@@ -208,13 +208,32 @@ def test_la_tool_llama_al_mismo_service_que_el_router() -> None:
 
 
 def test_la_tool_no_reimplementa_ninguna_regla() -> None:
-    """Sin cálculo, sin tolerancia y sin constantes de la norma en la capa de tools."""
+    """Sin cálculo, sin tolerancia y sin constantes de la norma en la capa de tools.
+
+    Se inspeccionan identificadores usados e imports, no el texto del archivo: la cadena
+    `"ancho_minimo_mm"` aparece legítimamente como clave de la respuesta de la tool, que es
+    muy distinto de llamar a la función pura del cálculo.
+    """
     import app.mcp.tools.pistas as modulo
 
-    fuente = inspeccion.getsource(modulo)
+    arbol = ast.parse(inspeccion.getsource(modulo))
+    identificadores = {n.id for n in ast.walk(arbol) if isinstance(n, ast.Name)} | {
+        n.attr for n in ast.walk(arbol) if isinstance(n, ast.Attribute)
+    }
+    importados = {
+        n.module for n in ast.walk(arbol) if isinstance(n, ast.ImportFrom) and n.module
+    }
 
-    for prohibido in ("ancho_minimo_mm", "TOLERANCIA_MM", "K_POR_CAPA", "0.048", "0.001", "35.0"):
-        assert prohibido not in fuente
+    for prohibido in ("ancho_minimo_mm", "redondear_mm", "TOLERANCIA_MM", "K_POR_CAPA"):
+        assert prohibido not in identificadores, f"la tool no debe usar {prohibido}"
+    assert "app.utils.ipc2221" not in importados
+
+    numeros = {
+        n.value
+        for n in ast.walk(arbol)
+        if isinstance(n, ast.Constant) and isinstance(n.value, float)
+    }
+    assert numeros == set(), f"la tool no debe contener constantes numéricas: {numeros}"
 
 
 def test_el_token_de_la_sesion_es_none_fuera_de_contexto_http() -> None:
@@ -247,3 +266,100 @@ def test_texto_vacio_devuelve_error_de_datos(
     )
 
     assert "datos inválidos" in resultado["error"]
+
+
+# --- calcular_ancho_minimo: éxito y error (Artículo VII.6) ---------------------------
+
+
+def test_calcular_ancho_minimo_exitoso() -> None:
+    from app.mcp.tools.pistas import calcular_ancho_minimo
+
+    resultado = calcular_ancho_minimo(
+        corriente_a=1.0, espesor_oz=1.0, capa="externa", delta_t_c=10.0
+    )
+
+    assert resultado == {"ancho_minimo_mm": 0.3}
+
+
+def test_calcular_ancho_minimo_fuera_de_rango_devuelve_error() -> None:
+    """Artículo VI.3: estructura de error, no excepción (Artículo VIII.5 para R2)."""
+    from app.mcp.tools.pistas import calcular_ancho_minimo
+
+    resultado = calcular_ancho_minimo(
+        corriente_a=36.0, espesor_oz=1.0, capa="externa", delta_t_c=10.0
+    )
+
+    assert "rango de validez" in resultado["error"]
+
+
+def test_calcular_ancho_minimo_con_capa_invalida_devuelve_error() -> None:
+    from app.mcp.tools.pistas import calcular_ancho_minimo
+
+    resultado = calcular_ancho_minimo(
+        corriente_a=1.0, espesor_oz=1.0, capa="superficial", delta_t_c=10.0
+    )
+
+    assert "datos inválidos" in resultado["error"]
+
+
+def test_caso_de_error_7_por_mcp() -> None:
+    """Caso 7 de la spec: con los mismos parámetros, la interna exige más ancho."""
+    from app.mcp.tools.pistas import calcular_ancho_minimo
+
+    interna = calcular_ancho_minimo(
+        corriente_a=1.0, espesor_oz=1.0, capa="interna", delta_t_c=10.0
+    )
+    externa = calcular_ancho_minimo(
+        corriente_a=1.0, espesor_oz=1.0, capa="externa", delta_t_c=10.0
+    )
+
+    assert interna["ancho_minimo_mm"] == 0.781
+    assert externa["ancho_minimo_mm"] == 0.3
+    assert interna["ancho_minimo_mm"] > externa["ancho_minimo_mm"]
+
+
+def test_mcp_y_rest_dan_el_mismo_ancho_minimo() -> None:
+    """SC-004: misma entrada, mismo veredicto por las dos interfaces."""
+    from app.mcp.tools.pistas import calcular_ancho_minimo
+    from app.schemas.pista import CalculoIn
+    from app.services.pistas import calcular_ancho_minimo as servicio
+
+    por_mcp = calcular_ancho_minimo(
+        corriente_a=5.0, espesor_oz=1.0, capa="externa", delta_t_c=20.0
+    )["ancho_minimo_mm"]
+    por_servicio = servicio(
+        CalculoIn(corriente_a=5.0, espesor_oz=1.0, capa="externa", delta_t_c=20.0)  # type: ignore[arg-type]
+    )
+
+    assert por_mcp == por_servicio == 1.816
+
+
+def test_calcular_ancho_minimo_esta_registrada_con_descripcion_especifica() -> None:
+    """Artículo VI.2."""
+    from app.mcp.server import crear_servidor_mcp
+    from app.mcp.tools.pistas import DESCRIPCION_CALCULAR_ANCHO
+
+    servidor = crear_servidor_mcp()
+    tool = asyncio.run(servidor.get_tool("calcular_ancho_minimo"))
+
+    assert tool is not None
+    assert tool.description == DESCRIPCION_CALCULAR_ANCHO
+    assert "IPC-2221" in tool.description
+    assert "sin registrar" in tool.description
+
+
+def test_la_tool_de_calculo_no_pide_identidad_ni_repositorio() -> None:
+    """No hay datos de usuario implicados: no persiste nada (FR-014)."""
+    from app.mcp.tools.pistas import calcular_ancho_minimo
+
+    parametros = set(inspeccion.signature(calcular_ancho_minimo).parameters)
+
+    assert parametros == {"corriente_a", "espesor_oz", "capa", "delta_t_c"}
+
+
+def test_las_dos_tools_estan_registradas() -> None:
+    from app.mcp.server import crear_servidor_mcp
+
+    tools = asyncio.run(crear_servidor_mcp().list_tools())
+
+    assert {"registrar_pista", "calcular_ancho_minimo"} <= {t.name for t in tools}

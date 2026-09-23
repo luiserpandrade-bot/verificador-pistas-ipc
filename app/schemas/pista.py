@@ -82,3 +82,39 @@ class CalculoOut(BaseModel):
     ancho_minimo_mm: float = Field(
         description="Ancho mínimo que exige IPC-2221, en milímetros y con 3 decimales."
     )
+
+
+class PistaUpdate(BaseModel):
+    """Cuerpo de `PATCH /pistas/{id}`: todos los campos son opcionales.
+
+    Los campos ausentes conservan su valor actual. La revalidación de R1, R2 y R3 sobre el
+    resultado de la fusión la hace el service (R5), no este schema.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    nombre_red: str | None = Field(default=None, min_length=1, max_length=120)
+    proyecto: str | None = Field(default=None, min_length=1, max_length=120)
+    corriente_a: float | None = Field(default=None, gt=0)
+    espesor_oz: float | None = Field(default=None, gt=0)
+    capa: Capa | None = None
+    delta_t_c: float | None = Field(default=None, gt=0)
+    ancho_mm: float | None = Field(default=None, gt=0)
+
+    def cambios(self) -> dict[str, object]:
+        """Campos efectivamente enviados, con la capa ya como texto de la norma."""
+        enviados = self.model_dump(exclude_unset=True, exclude_none=True)
+        if "capa" in enviados and self.capa is not None:
+            enviados["capa"] = self.capa.value
+        return enviados
+
+
+class PaginacionParams(BaseModel):
+    """Query params de `GET /pistas/` (Artículo V.2, decisión R-005).
+
+    Valores por defecto razonables y un tope superior, para que un listado no degenere en
+    una descarga completa. Un valor inválido es error de schema (422), no de negocio.
+    """
+
+    skip: int = Field(default=0, ge=0)
+    limit: int = Field(default=20, ge=1, le=100)

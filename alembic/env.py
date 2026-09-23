@@ -9,9 +9,9 @@ No se usa `fileConfig` a propósito: el logging de la aplicación se configura e
 `app/logging_config.py`, que además redacta secretos (Artículo IV.1).
 """
 
-from alembic import context
 from sqlalchemy import create_engine
 
+from alembic import context
 from app.config import obtener_configuracion
 from app.database import Base, argumentos_de_conexion
 

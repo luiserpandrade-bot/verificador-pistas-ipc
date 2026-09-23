@@ -150,3 +150,67 @@ def test_la_app_monta_el_servidor_mcp() -> None:
     ]
 
     assert RUTA_MCP in rutas_montadas
+
+
+# --- Lectura del token del transporte HTTP (Artículo VI.4) ---------------------------
+
+
+def test_el_token_se_lee_pidiendo_explicitamente_la_cabecera_authorization() -> None:
+    """FastMCP descarta `authorization` por defecto; hay que pedirla.
+
+    Sin `include={"authorization"}`, `get_http_headers()` devuelve las cabeceras **sin** la
+    credencial, la tool no ve token y la sesión cae al usuario demo aunque el cliente se
+    haya autenticado. Eso incumpliría el Artículo VI.4, que obliga a usar la identidad del
+    token cuando existe. Este test fija la llamada correcta.
+    """
+    import ast
+    import inspect as inspeccion
+
+    import app.mcp.tools.pistas as modulo
+
+    arbol = ast.parse(inspeccion.getsource(modulo.token_de_la_sesion))
+    llamadas = [
+        nodo
+        for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.Call)
+        and isinstance(nodo.func, ast.Name)
+        and nodo.func.id == "get_http_headers"
+    ]
+
+    assert llamadas, "token_de_la_sesion debe consultar las cabeceras del transporte"
+    argumentos = {kw.arg for llamada in llamadas for kw in llamada.keywords}
+    assert "include" in argumentos or "include_all" in argumentos, (
+        "get_http_headers descarta authorization por defecto: hay que pedirla explícitamente"
+    )
+
+
+def test_extrae_el_token_de_una_cabecera_bearer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Con cabecera presente, se devuelve el token sin el prefijo `Bearer`."""
+    import fastmcp.server.dependencies as dependencias
+
+    from app.mcp.tools.pistas import token_de_la_sesion
+
+    monkeypatch.setattr(
+        dependencias,
+        "get_http_headers",
+        lambda **_: {"authorization": "Bearer abc.def.ghi"},
+    )
+
+    assert token_de_la_sesion() == "abc.def.ghi"
+
+
+@pytest.mark.parametrize(
+    "cabeceras",
+    [{}, {"authorization": ""}, {"authorization": "Basic dXNlcjpwYXNz"}, {"otra": "x"}],
+)
+def test_sin_cabecera_bearer_no_hay_token(
+    monkeypatch: pytest.MonkeyPatch, cabeceras: dict[str, str]
+) -> None:
+    """Sin credencial utilizable se devuelve None, que lleva al fallback documentado."""
+    import fastmcp.server.dependencies as dependencias
+
+    from app.mcp.tools.pistas import token_de_la_sesion
+
+    monkeypatch.setattr(dependencias, "get_http_headers", lambda **_: cabeceras)
+
+    assert token_de_la_sesion() is None

@@ -41,6 +41,11 @@ async def manejar_excepcion_no_controlada(_peticion: Request, error: Exception) 
 
 def crear_app() -> FastAPI:
     """Construye la aplicación con sus routers, middleware y manejadores."""
+    # El lifespan del servidor MCP debe ejecutarlo la app padre: FastAPI no arranca el de
+    # una sub-app montada, y sin él el transporte HTTP de MCP falla con
+    # "Task group is not initialized" en la primera petición.
+    app_mcp = servidor_mcp.http_app(path="/")
+
     aplicacion = FastAPI(
         title="Verificador de pistas de PCB (IPC-2221)",
         description=(
@@ -48,6 +53,7 @@ def crear_app() -> FastAPI:
             "IPC-2221 para la corriente que van a conducir."
         ),
         version="0.1.0",
+        lifespan=app_mcp.lifespan,
     )
 
     aplicacion.include_router(router_auth)
@@ -75,7 +81,11 @@ def crear_app() -> FastAPI:
 
     # El servidor MCP se monta sobre la misma app ASGI, así que REST y MCP comparten
     # proceso y, sobre todo, comparten los mismos services (Artículo VI.1).
-    aplicacion.mount(RUTA_MCP, servidor_mcp.http_app())
+    #
+    # `path="/"` es necesario: por defecto `http_app()` publica su endpoint en `/mcp/`
+    # dentro de la app que devuelve, así que montarla en `RUTA_MCP` sin esto dejaría el
+    # endpoint real en `/mcp/mcp/`.
+    aplicacion.mount(RUTA_MCP, app_mcp)
 
     return aplicacion
 

@@ -16,9 +16,20 @@ import inspect as inspeccion
 
 import pytest
 
-from app.schemas.pista import PistaCreate
-from app.services.errores import AnchoInsuficienteError, FueraDeRangoError
-from app.services.pistas import registrar_pista
+from app.schemas.pista import PistaCreate, PistaUpdate
+from app.services.errores import (
+    AnchoInsuficienteError,
+    FueraDeRangoError,
+    PistaAjenaError,
+    PistaNoEncontradaError,
+)
+from app.services.pistas import (
+    actualizar_pista,
+    eliminar_pista,
+    listar_pistas,
+    obtener_pista,
+    registrar_pista,
+)
 from app.utils.ipc2221 import K_POR_CAPA, TOLERANCIA_MM, Capa, ancho_minimo_mm
 from tests.fakes import RepositorioPistasFalso
 
@@ -376,3 +387,307 @@ def test_r3_la_constante_k_solo_vive_en_utils() -> None:
 def test_r3_toda_capa_declarada_tiene_su_k() -> None:
     """Si alguien añade una capa al Enum sin su k, esto falla antes de llegar a producción."""
     assert set(K_POR_CAPA) == set(Capa)
+
+
+# --- R4: aislamiento por usuario ----------------------------------------------------
+
+OTRO_USUARIO_ID = 99
+
+
+def _guardar_pista_de(
+    repo: RepositorioPistasFalso, usuario_id: int, nombre_red: str = "VBUS"
+) -> object:
+    return repo.guardar(
+        usuario_id,
+        {
+            "nombre_red": nombre_red,
+            "proyecto": "fuente-5v",
+            "corriente_a": 1.0,
+            "espesor_oz": 1.0,
+            "capa": "externa",
+            "delta_t_c": 10.0,
+            "ancho_mm": 0.5,
+        },
+    )
+
+
+def test_r4_el_listado_solo_devuelve_las_propias(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    _guardar_pista_de(repo_pistas_falso, USUARIO_ID, "MIA")
+    _guardar_pista_de(repo_pistas_falso, OTRO_USUARIO_ID, "AJENA")
+
+    listado = listar_pistas(USUARIO_ID, repo=repo_pistas_falso)
+
+    assert [p.nombre_red for p in listado] == ["MIA"]
+
+
+def test_r4_el_listado_nunca_deniega_solo_filtra(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    """Artículo V.1: `GET /pistas/` no devuelve 403, simplemente no incluye lo ajeno."""
+    _guardar_pista_de(repo_pistas_falso, OTRO_USUARIO_ID, "AJENA")
+
+    assert listar_pistas(USUARIO_ID, repo=repo_pistas_falso) == []
+
+
+def test_r4_el_listado_pagina(repo_pistas_falso: RepositorioPistasFalso) -> None:
+    for indice in range(5):
+        _guardar_pista_de(repo_pistas_falso, USUARIO_ID, f"RED-{indice}")
+
+    pagina = listar_pistas(USUARIO_ID, skip=1, limit=2, repo=repo_pistas_falso)
+
+    assert [p.nombre_red for p in pagina] == ["RED-1", "RED-2"]
+
+
+def test_r4_obtener_una_pista_propia_funciona(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    mia = _guardar_pista_de(repo_pistas_falso, USUARIO_ID)
+
+    assert obtener_pista(mia.id, USUARIO_ID, repo=repo_pistas_falso).id == mia.id
+
+
+def test_r4_obtener_una_pista_ajena_lanza_pista_ajena(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    """Caso de error 5 de la spec: pasar el ID de otro usuario a mano → 403."""
+    ajena = _guardar_pista_de(repo_pistas_falso, OTRO_USUARIO_ID)
+
+    with pytest.raises(PistaAjenaError):
+        obtener_pista(ajena.id, USUARIO_ID, repo=repo_pistas_falso)
+
+
+def test_r4_obtener_una_pista_inexistente_lanza_no_encontrada(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    """Caso de error 6 de la spec: pista inexistente → 404."""
+    with pytest.raises(PistaNoEncontradaError):
+        obtener_pista(9999, USUARIO_ID, repo=repo_pistas_falso)
+
+
+def test_r4_ajena_y_no_encontrada_son_errores_distintos(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    """Artículo V.1 reserva 403 para el recurso existente de otro dueño."""
+    ajena = _guardar_pista_de(repo_pistas_falso, OTRO_USUARIO_ID)
+
+    with pytest.raises(PistaAjenaError):
+        obtener_pista(ajena.id, USUARIO_ID, repo=repo_pistas_falso)
+    with pytest.raises(PistaNoEncontradaError):
+        obtener_pista(ajena.id + 1000, USUARIO_ID, repo=repo_pistas_falso)
+
+
+def test_r4_los_services_de_lectura_reciben_el_repositorio_por_parametro() -> None:
+    """Artículo II.3."""
+    for funcion in (listar_pistas, obtener_pista):
+        parametro = inspeccion.signature(funcion).parameters["repo"]
+        assert parametro.default is not inspeccion.Parameter.empty
+
+
+# --- R5: revalidación al modificar ---------------------------------------------------
+
+
+def test_r5_una_actualizacion_valida_se_persiste(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    mia = _guardar_pista_de(repo_pistas_falso, USUARIO_ID)
+
+    actualizada = actualizar_pista(
+        mia.id, PistaUpdate(ancho_mm=0.9), USUARIO_ID, repo=repo_pistas_falso
+    )
+
+    assert actualizada.ancho_mm == 0.9
+    assert "actualizar" in repo_pistas_falso.escrituras
+
+
+def test_r5_una_actualizacion_que_deja_el_ancho_insuficiente_se_rechaza(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    """Subir la corriente sin ensanchar la pista debe rechazarse por completo."""
+    mia = _guardar_pista_de(repo_pistas_falso, USUARIO_ID)
+
+    with pytest.raises(AnchoInsuficienteError):
+        actualizar_pista(
+            mia.id, PistaUpdate(corriente_a=5.0), USUARIO_ID, repo=repo_pistas_falso
+        )
+
+
+def test_r5_al_rechazar_no_llama_a_actualizar_del_repositorio(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    """La diferencia entre rechazar y guardar mal: no debe haber escritura."""
+    mia = _guardar_pista_de(repo_pistas_falso, USUARIO_ID)
+    repo_pistas_falso.escrituras.clear()
+
+    with pytest.raises(AnchoInsuficienteError):
+        actualizar_pista(mia.id, PistaUpdate(ancho_mm=0.05), USUARIO_ID, repo=repo_pistas_falso)
+
+    assert repo_pistas_falso.escrituras == []
+
+
+def test_r5_la_pista_conserva_sus_valores_anteriores_tras_un_rechazo(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    mia = _guardar_pista_de(repo_pistas_falso, USUARIO_ID)
+
+    with pytest.raises(AnchoInsuficienteError):
+        actualizar_pista(mia.id, PistaUpdate(ancho_mm=0.05), USUARIO_ID, repo=repo_pistas_falso)
+
+    intacta = repo_pistas_falso.pistas[mia.id]
+    assert intacta.ancho_mm == 0.5
+    assert intacta.corriente_a == 1.0
+
+
+def test_r5_tambien_revalida_el_rango_r2(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    """R5 revalida R2, así que un PATCH fuera de rango es 400, no 422."""
+    mia = _guardar_pista_de(repo_pistas_falso, USUARIO_ID)
+
+    with pytest.raises(FueraDeRangoError):
+        actualizar_pista(
+            mia.id, PistaUpdate(corriente_a=40.0), USUARIO_ID, repo=repo_pistas_falso
+        )
+
+    assert repo_pistas_falso.pistas[mia.id].corriente_a == 1.0
+
+
+def test_r5_revalida_con_la_capa_resultante(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    """Cambiar a capa interna endurece el mínimo: 0.5 mm ya no basta."""
+    mia = _guardar_pista_de(repo_pistas_falso, USUARIO_ID)
+
+    with pytest.raises(AnchoInsuficienteError):
+        actualizar_pista(
+            mia.id, PistaUpdate(capa=Capa.INTERNA), USUARIO_ID, repo=repo_pistas_falso
+        )
+
+
+def test_r5_un_cambio_coherente_de_varios_campos_se_acepta(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    """Subir corriente y ancho a la vez sí debe pasar."""
+    mia = _guardar_pista_de(repo_pistas_falso, USUARIO_ID)
+
+    actualizada = actualizar_pista(
+        mia.id,
+        PistaUpdate(corriente_a=5.0, delta_t_c=20.0, ancho_mm=2.0),
+        USUARIO_ID,
+        repo=repo_pistas_falso,
+    )
+
+    assert (actualizada.corriente_a, actualizada.ancho_mm) == (5.0, 2.0)
+
+
+def test_r5_no_existe_estado_no_conforme(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    """Decisión R-011: se rechaza; no se guarda marcada."""
+    mia = _guardar_pista_de(repo_pistas_falso, USUARIO_ID)
+
+    with pytest.raises(AnchoInsuficienteError):
+        actualizar_pista(mia.id, PistaUpdate(ancho_mm=0.05), USUARIO_ID, repo=repo_pistas_falso)
+
+    guardada = repo_pistas_falso.pistas[mia.id]
+    assert not hasattr(guardada, "conforme")
+    assert not hasattr(guardada, "estado")
+
+
+def test_r5_un_patch_vacio_no_escribe_nada(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    mia = _guardar_pista_de(repo_pistas_falso, USUARIO_ID)
+    repo_pistas_falso.escrituras.clear()
+
+    resultado = actualizar_pista(mia.id, PistaUpdate(), USUARIO_ID, repo=repo_pistas_falso)
+
+    assert resultado.id == mia.id
+    assert repo_pistas_falso.escrituras == []
+
+
+def test_r5_actualizar_una_pista_ajena_se_deniega_antes_de_validar(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    """Artículo IV.4: la pertenencia se comprueba antes de tocar la pista."""
+    ajena = _guardar_pista_de(repo_pistas_falso, OTRO_USUARIO_ID)
+    repo_pistas_falso.escrituras.clear()
+
+    with pytest.raises(PistaAjenaError):
+        actualizar_pista(ajena.id, PistaUpdate(ancho_mm=9.0), USUARIO_ID, repo=repo_pistas_falso)
+
+    assert repo_pistas_falso.escrituras == []
+
+
+def test_r5_actualizar_una_pista_inexistente_es_no_encontrada(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    with pytest.raises(PistaNoEncontradaError):
+        actualizar_pista(9999, PistaUpdate(ancho_mm=1.0), USUARIO_ID, repo=repo_pistas_falso)
+
+
+def test_r5_reutiliza_las_mismas_validaciones_que_el_registro() -> None:
+    """No hay reglas duplicadas: R5 llama a las funciones de R1 y R2."""
+    import app.services.pistas as modulo
+
+    fuente = inspeccion.getsource(modulo.actualizar_pista)
+
+    assert "_validar_parametros_norma" in fuente
+    assert "_validar_ancho" in fuente
+
+
+# --- Borrado (R4 aplicado al eliminar) -----------------------------------------------
+
+
+def test_eliminar_una_pista_propia_la_borra(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    mia = _guardar_pista_de(repo_pistas_falso, USUARIO_ID)
+
+    eliminar_pista(mia.id, USUARIO_ID, repo=repo_pistas_falso)
+
+    assert repo_pistas_falso.pistas == {}
+    assert "eliminar" in repo_pistas_falso.escrituras
+
+
+def test_eliminar_una_pista_ajena_no_borra_nada(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    """Caso de error 5: eliminar una pista de otro usuario pasando su ID → 403."""
+    ajena = _guardar_pista_de(repo_pistas_falso, OTRO_USUARIO_ID)
+    repo_pistas_falso.escrituras.clear()
+
+    with pytest.raises(PistaAjenaError):
+        eliminar_pista(ajena.id, USUARIO_ID, repo=repo_pistas_falso)
+
+    assert ajena.id in repo_pistas_falso.pistas
+    assert repo_pistas_falso.escrituras == []
+
+
+def test_eliminar_una_pista_inexistente_es_no_encontrada(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    """Caso de error 6: operar sobre una pista inexistente → 404."""
+    with pytest.raises(PistaNoEncontradaError):
+        eliminar_pista(9999, USUARIO_ID, repo=repo_pistas_falso)
+
+    assert repo_pistas_falso.escrituras == []
+
+
+def test_eliminar_solo_borra_la_indicada(
+    repo_pistas_falso: RepositorioPistasFalso,
+) -> None:
+    primera = _guardar_pista_de(repo_pistas_falso, USUARIO_ID, "PRIMERA")
+    segunda = _guardar_pista_de(repo_pistas_falso, USUARIO_ID, "SEGUNDA")
+
+    eliminar_pista(primera.id, USUARIO_ID, repo=repo_pistas_falso)
+
+    assert list(repo_pistas_falso.pistas) == [segunda.id]
+
+
+def test_eliminar_recibe_el_repositorio_por_parametro() -> None:
+    """Artículo II.3."""
+    parametro = inspeccion.signature(eliminar_pista).parameters["repo"]
+
+    assert parametro.default is not inspeccion.Parameter.empty
