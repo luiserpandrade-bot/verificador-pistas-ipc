@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from app.logging_config import configurar_logging
 from app.mcp.server import servidor_mcp
 from app.routers.auth import router as router_auth
+from app.routers.pistas import router as router_pistas
 
 DETALLE_ERROR_INTERNO = "Error interno del servidor"
 
@@ -50,6 +51,7 @@ def crear_app() -> FastAPI:
     )
 
     aplicacion.include_router(router_auth)
+    aplicacion.include_router(router_pistas)
 
     @aplicacion.middleware("http")
     async def registrar_peticiones(
